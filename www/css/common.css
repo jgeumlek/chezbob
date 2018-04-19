@@ -1,0 +1,41 @@
+body {
+    background-color: #ffffff;
+    margin: 0px;
+}
+* {
+    font-family: 'Open Sans', sans-serif;
+}
+h1,h2,h3,h4,h5,h6 {
+    text-align: center;
+}
+h1#banner {
+    text-decoration: none;
+    font-weight: normal;
+}
+h1#banner {
+    font-family: 'Dancing Script', sans-serif;
+    margin-left: auto;
+    margin-right: auto;
+    display: block;
+    text-align: center;
+    border-bottom: 1px solid black;
+    padding-bottom: 10px;
+    padding-top: 10px;
+    margin-top: 0px;
+    background-color: #008080;
+    color: #FFFFFF;
+    font-size: 48px;
+}
+h2 {
+    border-bottom: 1px solid black;
+}
+
+a, a:visited {
+    color: #003355;
+}
+
+.center {
+    text-align: center;
+    margin-left: auto;
+    margin-right: auto;
+}

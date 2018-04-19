@@ -46,13 +46,6 @@ def user_details_byname(request, username):
 
   return render_or_error('users/user_details.html', messages)                               
 
-def add_aggregate_purchase(date, barcode, quantity, value, bulkid):
-  cursor = connection.cursor()
-  cursor.execute("""INSERT INTO aggregate_purchases 
-                    (date, barcode, quantity, price, bulkid) 
-                    VALUES (%s, %s, %s, %s, %s)""",
-                 (date, barcode, quantity, value, bulkid))
-
 @transaction.commit_manually
 def new_transaction(type, bound, user, messages):
   try:
@@ -67,8 +60,8 @@ def new_transaction(type, bound, user, messages):
     user.balance = F('balance') + tran.value
     if type in ['ADD', 'REFUND', 'DONATION', 'WRITEOFF']: pass
     elif type == 'BUY':
-      add_aggregate_purchase(tran.time.date(), tran.barcode.barcode, 1,
-                             -1 * tran.value, tran.barcode.bulk.bulkid)
+      # Nothing is required in this case.
+      pass
     elif type == 'TRANSFER':
       otran = Transaction()
       otran.user = bound.cleaned_data['other_user']
@@ -144,8 +137,8 @@ def delete_transaction(tran, messages):
     user.balance = F('balance') - tran.value
     if type in ['ADD', 'REFUND', 'DONATION', 'WRITEOFF']: pass
     elif type == 'BUY':
-      add_aggregate_purchase(tran.time.date(), tran.barcode.barcode, -1,
-                             tran.value, tran.barcode.bulk.bulkid)
+      # Nothing is required in this case.
+      pass
     elif type == 'TRANSFER':
       otrans = Transaction.objects.filter(time=tran.time, value=-1*tran.value)
       if len(otrans) == 1:
@@ -185,14 +178,18 @@ def user_details(request, userid):
   
   barcodes = Barcode.objects.filter(user=user.id)
   
-  def make_form(type, title, form):
-    form_types[type] = {'title' : title,
-                        'type'  : type,
-                        'form'  : form,
-                        'fields': form(),
-                        'show'  : type + "_open" in request.POST }
+  def make_form(type, title, form, userid=None):
+    form_types[type] = {
+        'title' : title,
+        'type'  : type,
+        'form'  : form,
+        'fields': form(userid) if userid else form(),
+        'show'  : type + "_open" in request.POST,
+    }
+    if userid:
+        form_types[type]['constructor'] = lambda x: form(userid, x)
   form_types = {}  
-  make_form('BUY',       'Make Buy Transaction', BuyForm)
+  make_form('BUY',       'Make Buy Transaction', BuyForm, userid)
   make_form('TRANSFER',  'Make Transfer',        TransferForm)
   make_form('ADD',       'Add Cash',             AddUncountedForm)
   make_form('REIMBURSE', 'Issue Reimbursement',  ReimburseForm)
@@ -235,7 +232,8 @@ def user_details(request, userid):
   
   for type in form_types:
     if type + "_save" in request.POST:
-      bound = form_types[type]['form'](request.POST)
+      form_type = form_types[type]
+      bound = form_type.get('constructor', form_type['form'])(request.POST)
       if bound.data['id'] == 'new':
         new_transaction(type, bound, user, messages)
       else:

@@ -316,12 +316,12 @@ class sodad_server {
                                         }
                                         throw "Target user " + targetuser + " not found!"
                                     })
-                             })
-                        .catch(function (err)
-                            {
-                                log.error("Error committing transfer transaction for client " + client + ", rolling back: ", err);
-                                server.clientchannels[client].displayerror("fa-warning", "Transfer Error", err);
-                            });
+                             });
+                })
+                .catch(function (err)
+                {
+                    log.error("Error committing transfer transaction for client " + client + ", rolling back: ", err);
+                    server.clientchannels[client].displayerror("fa-warning", "Transfer Error", err);
                 });
             }
         });
@@ -378,12 +378,12 @@ class sodad_server {
                                         newbalance: user_updated.balance
                                     })
                                 });
-                             })
-                        .catch(function (err)
-                            {
-                                log.error("Error committing transaction for client " + client + ", rolling back: ", err);
-                                server.clientchannels[client].displayerror("fa-warning", "Transaction Error", err);
-                            });
+                             });
+                })
+                .catch(function (err)
+                {
+                    log.error("Error committing transaction for client " + client + ", rolling back: ", err);
+                    server.clientchannels[client].displayerror("fa-warning", "Transaction Error", err);
                 });
             }
         });
@@ -443,72 +443,93 @@ class sodad_server {
                                         else
                                         {
                                             //maybe it's a product? price check.
-                                            return models.Products.find( { where: { barcode: barcode }})
-                                                .then( function (products)
+                                            var handler = function (products) {
+                                                if (products !== null && session === null)
                                                 {
-                                                    if (products !== null && session === null)
-                                                    {
-                                                        log.trace("Display price for product " + products.name + " due to barcode scan.");
-                                                        server.clientchannels[sessionid].displayerror("fa-barcode", "Price Check", products.name + " costs " + products.price);
-                                                    }
-                                                    else if (products !== null && session !== null)
-                                                    {
-                                                        log.info("Purchase " + products.name + " using barcode scan.");
-                                                        return models.Users.find( { where: { userid : session.uid }})
-                                                            .then( function (user)
-                                                            {
-                                                                var purchase_desc = user.pref_forget_which_product === "true" ? "BUY" : "BUY " + products.name;
-                                                                var purchase_barcode = user.pref_forget_which_product  === "true" ? null : products.barcode;
-                                                                server.balance_transaction(server, sessionid, purchase_desc,
-                                                                 products.name, purchase_barcode,  "-" + products.price);
-                                                            });
-
-                                                    }
-                                                    else if (session !== null && session.learn === "true")
-                                                    {
-                                                        //we are trying to learn this barcode
-                                                        log.trace("Learning mode on, add learned barcode.")
-                                                        models.Userbarcodes.find(
-                                                                    {
-                                                                        where : {
-                                                                        barcode: barcode,
-                                                                        userid: session.uid}
+                                                    log.trace("Display price for product " + products.name + " due to barcode scan.");
+                                                    server.clientchannels[sessionid].displayerror("fa-barcode", "Price Check", products.name + " costs " + products.price);
+                                                }
+                                                else if (products !== null && session !== null)
+                                                {
+                                                    log.info("Purchase " + products.name + " using barcode scan.");
+                                                    return models.Users.find( { where: { userid : session.uid }})
+                                                        .then( function (user)
+                                                        {
+                                                            // Look up the products again with the dynamic products list
+                                                            models.DynamicProducts.find( { where: { barcode: barcode, userid: session.uid }})
+                                                                .then( function (products) {
+                                                                    var purchase_desc;
+                                                                    var purchase_barcode = user.pref_forget_which_product  === "true" ? null : products.barcode;
+                                                                    var price = "-" + products.price;
+                                                                    if (parseFloat(products.price) < 0) {
+                                                                        // For dynamic pricing, we can have 'negative' priced products for, e.g., restocking credit.
+                                                                        price = (-1 * parseFloat(products.price)) + "";
+                                                                        log.info("Negative price:" + products.price);
+                                                                        log.info("Adjusted price:" + price);
+                                                                        purchase_desc = "ADD " + products.name;
                                                                     }
-                                                                ).then(function (exist_barcode) {
-                                                                    if (exist_barcode !== null)
-                                                                    {
-                                                                        throw "Barcode already learned!"
+                                                                    else {
+                                                                        purchase_desc = user.pref_forget_which_product === "true" ? "BUY" : "BUY " + products.name;
                                                                     }
-                                                                    return models.Userbarcodes.create(
-                                                                        {
-                                                                            barcode: barcode,
-                                                                            userid: session.uid
-                                                                        }
-                                                                    ).then(function (a)
-                                                                        {
-                                                                            log.info("Barcode " + barcode + " learned for client " + sessionid);
-                                                                            server.clientchannels[sessionid].displayerror("fa-barcode", "Barcode learned", "Barcode " + barcode + " learned");
-                                                                            server.clientchannels[sessionid].updatebarcodes();
-                                                                        })
+                                                                    log.info("Inserting transaction using price: " + price);
+                                                                    server.balance_transaction(server, sessionid, purchase_desc, products.name, purchase_barcode, price);
                                                                 })
-                                                                .catch(function (e)
+                                                        });
+
+                                                }
+                                                else if (session !== null && session.learn === "true")
+                                                {
+                                                    //we are trying to learn this barcode
+                                                    log.trace("Learning mode on, add learned barcode.")
+                                                    models.Userbarcodes.find(
+                                                                {
+                                                                    where : {
+                                                                    barcode: barcode,
+                                                                    userid: session.uid}
+                                                                }
+                                                            ).then(function (exist_barcode) {
+                                                                if (exist_barcode !== null)
+                                                                {
+                                                                    throw "Barcode already learned!"
+                                                                }
+                                                                return models.Userbarcodes.create(
                                                                     {
-                                                                        log.info("Barcode " + barcode + " NOT learned for client " + sessionid + " due to error: " + e);
-                                                                        server.clientchannels[sessionid].displayerror("fa-warning", "Learn failed", "Barcode " + barcode + " already learned by you or another user.");
+                                                                        barcode: barcode,
+                                                                        userid: session.uid
+                                                                    }
+                                                                ).then(function (a)
+                                                                    {
+                                                                        log.info("Barcode " + barcode + " learned for client " + sessionid);
+                                                                        server.clientchannels[sessionid].displayerror("fa-barcode", "Barcode learned", "Barcode " + barcode + " learned");
+                                                                        server.clientchannels[sessionid].updatebarcodes();
                                                                     })
-                                                    }
-                                                    else if (session !== null && session.detail)
-                                                    {
-                                                        //trying to get detailed info about this barcode
-                                                    }
-                                                    //default to purchase
-                                                    else
-                                                    {
-                                                        //no idea what this is.
-                                                       log.trace("Unknown barcode " + barcode + ", rejecting.")
-                                                       server.clientchannels[sessionid].displayerror("fa-warning", "Unknown Barcode", "Unknown barcode " + barcode + ", please scan again.");
-                                                    }
-                                                })
+                                                            })
+                                                            .catch(function (e)
+                                                                {
+                                                                    log.info("Barcode " + barcode + " NOT learned for client " + sessionid + " due to error: " + e);
+                                                                    server.clientchannels[sessionid].displayerror("fa-warning", "Learn failed", "Barcode " + barcode + " already learned by you or another user.");
+                                                                })
+                                                }
+                                                else if (session !== null && session.detail)
+                                                {
+                                                    //trying to get detailed info about this barcode
+                                                }
+                                                //default to purchase
+                                                else
+                                                {
+                                                    //no idea what this is.
+                                                   log.error("Unknown barcode " + barcode + ", rejecting.")
+                                                   server.clientchannels[sessionid].displayerror("fa-warning", "Unknown Barcode", "Unknown barcode " + barcode + ", please scan again.");
+                                                }
+                                            };
+                                            if (session !== null)
+                                                return models.DynamicProducts.find(
+                                                    { where: { barcode: barcode , userid: session.uid } })
+                                                        .then( handler );
+                                            else
+                                                return models.Products.find(
+                                                    { where: { barcode: barcode } })
+                                                        .then( handler );
                                         }
                                 })
                         })
@@ -790,14 +811,25 @@ class sodad_server {
                         {
                             user.voice_settings = {};
                         }
-                        server.clientchannels[client].login(user);
+
+                        server.clientchannels[client].login(user, user.balance < 0 ? 'GetAttention' : 'Greeting');
 
                         // Enable bill acceptance if logged in to the soda machine.
                         // Is this really the best way to determine the client type?
                         if (server.clientidmap[ClientType.Soda][0] == client)
                         {
+                            if (user.balance < 0) {
+                                server.clientchannels[client].agentSpeak("It looks like you're trying to pay off your balance! Please insert some money!");
+                            } else {
+                                server.clientchannels[client].agentSpeak("It looks like you're trying to buy some soda! Just press the button for the soda you want!");
+                            }
+
                             var rpc_client = jayson.client.http(server.initdata.mdbendpoint);
+                            // Bill acceptor
                             rpc_client.request("Mdb.command", [ "E2" ], function (err,response){});
+
+                            // Coin acceptor
+                            rpc_client.request("Mdb.command", [ "E1" ], function (err,response){});
                             server.identifymode_fingerprint(server, client, false);
                         }
                 });
@@ -851,9 +883,14 @@ class sodad_server {
                             if (server.clientidmap[ClientType.Soda][0] == client)
                             {
                                 var rpc_client = jayson.client.http(server.initdata.mdbendpoint);
+
+                                // Bill acceptor
                                 rpc_client.request("Mdb.command", [ "D2" ], function (err,response){});
 
-                                // while we're at it, let's de-activate any fingerprint 
+                                // Coin acceptor
+                                rpc_client.request("Mdb.command", [ "D1" ], function (err,response){});
+
+                                // while we're at it, let's de-activate any fingerprint
                                 // enrollment that has survived thus far...
                                 server.learnmode_fingerprint(server, client, false);
                                 //pause?
@@ -873,12 +910,19 @@ class sodad_server {
                     })
     }
 
+    handleRainRequest(server: sodad_server, client : string)
+    {
+        var rpc_client = jayson.client.http(server.initdata.mdbendpoint);
+        rpc_client.request("Mdb.command", [ "G0204" ], function (err, response){});
+        server.balance_transaction(server, client, "WITHDRAW 1.00", "Withdraw 1.00", null, "-1.00");
+    }
+
     handleCoinDeposit(server: sodad_server, client : string, amt: string, tube: string, user)
     {
         if (user !== null)
         {
             log.info("Coin type " + amt + " accepted");
-            server.balance_transaction(server, client, "ADD " + amt,
+            server.balance_transaction(server, client, "ADD " + amt + " (coin)",
                 "Deposit " + amt, null, amt);
         }
         else
@@ -889,15 +933,16 @@ class sodad_server {
         }
     }
 
-    handleBillDeposit(server: sodad_server, client : string, amt: string, user)
+    handleBillEscrow(server: sodad_server, client : string, amt: string, user)
     {
         if (user !== null)
         {
-            log.info("Bill type " + amt + " accepted");
-            server.balance_transaction(server, client, "ADD " + amt,
-                "Deposit " + amt, null, amt);
+            log.info("Trying to accept bill type " + amt);
             var rpc_client = jayson.client.http(server.initdata.mdbendpoint);
             rpc_client.request("Mdb.command", [ "K1" ], function (err,response){});
+            // After we've sent the request to stack, we need to poll for the
+            // actual result.
+            rpc_client.request("Mdb.command", [ "P2" ], function (err,response){});
 
         }
         else
@@ -905,6 +950,21 @@ class sodad_server {
             log.warn("Bill type " + amt + " inserted, but no user is logged in, returning...")
             var rpc_client = jayson.client.http(server.initdata.mdbendpoint);
             rpc_client.request("Mdb.command", [ "K2" ], function (err,response){});
+        }
+    }
+
+    handleBillStack(server: sodad_server, client : string, amt: string, user)
+    {
+        if (user !== null)
+        {
+            log.info("$" + amt + " bill accepted");
+            server.balance_transaction(
+                server, client, "ADD " + amt + " (cash)", "Deposit $" + amt, null, amt);
+        }
+        else
+        {
+            // Once a bill is stacked, it can't be unstacked.
+            log.error("Bill type " + amt + " accepted, but no user is logged in.")
         }
     }
 
@@ -981,7 +1041,7 @@ class sodad_server {
 
     /******** Begin fingerprint functions ********/
 
-    // Fingerprint enrollment function: 
+    // Fingerprint enrollment function:
     // - true starts enrollment asynchronously
     // - false ends an enrollment early if possible
     learnmode_fingerprint( server: sodad_server, client: string, learnmode: boolean)
@@ -1083,7 +1143,7 @@ class sodad_server {
                             // error in the stopping of enrollment
                             log.info("FRPINT: failure to stop enrollment user " + uid + " err = " + error.message);
                         } else if (response) {
-                            // result means successful 
+                            // result means successful
                             log.info("FPRINT: success, stopped enrollment for user " + uid);
                         } else {
                             // error, neither response nor error returned
@@ -1116,11 +1176,13 @@ class sodad_server {
             {
                 // *** TODO restart the identification process if it errors out (not asked to cancel)
                 if(err) {
-                    server.clientchannels[client].rejectfingerprint(err.message);
+                    //server.clientchannels[client].rejectfingerprint(err.message);
                     log.info("FPRINT: error, fingerprint identify communication err = " + err.message);
+                    //server.identifymode_fingerprint(server, client, true);
                 } else if (error) {
-                    server.clientchannels[client].rejectfingerprint(error.message);
+                    //server.clientchannels[client].rejectfingerprint(error.message);
                     log.info("FPRINT: failure, fingerprint identify err = " + error.message);
+                    //server.identifymode_fingerprint(server, client, true);
                 } else if (response) {
 
                     log.info("FPRINT: success, fingerprint identify complete");
@@ -1128,10 +1190,9 @@ class sodad_server {
                     // get result from the response
                     var result = response;
 
-                    log.info("FPRINT: matched_userid = " + result.matched_userid)
+                    log.info("FPRINT: matched_userid = " + result.fpuserid)
 
-                    // ***** TODO log the user in! result.fpuserid
-                    models.Users.find( { where: { userid : result.matched_userid }})
+                    models.Users.find( { where: { userid : result.fpuserid }})
                         .then( function (user)
                             {
                                 if (user !== null)
@@ -1203,7 +1264,7 @@ class sodad_server {
                     // error in the stopping of enrollment
                     log.info("FRPINT: failure to stop identification, err = " + error.message);
                 } else if (response) {
-                    // result means successful 
+                    // result means successful
                     log.info("FPRINT: success, stopped identification");
                 } else {
                     // error, neither response nor error returned
@@ -1302,26 +1363,38 @@ class sodad_server {
                     redisclient.hgetallAsync("sodads:" + sessionid)
                         .then (function (session)
                             {
-                                if (session === null)
-                                {
-                                    log.info ("Vend request for " + requested_soda + " DENIED due to no session");
-                                    server.clientchannels[sessionid].displayerror("fa-warn", "Vend DENIED", "You must be logged in to buy soda.");
-                                    cb(null, false);
+                                //get requested soda name...
+                                var lookup;
+                                if (session !== null) {
+                                    lookup = models.DynamicProducts.find(
+                                        {where: {
+                                            barcode: server.initdata.sodamap[requested_soda],
+                                            userid: session.uid }})
                                 }
-                                else
-                                {
-                                    log.info("Vend request for " + requested_soda + " AUTHORIZED for user " + session.username);
-                                    //get requested soda name...
-                                    models.Products.find({where : {barcode : server.initdata.sodamap[requested_soda] }})
-                                        .then(function (sodainfo)
+                                else {
+                                    lookup = models.Products.find(
+                                        {where: {
+                                            barcode: server.initdata.sodamap[requested_soda] }})
+                                }
+                                lookup.then(function (sodainfo)
+                                    {
+                                        if (session === null)
+                                        {
+                                            log.info ("Vend request for " + requested_soda + " DENIED due to no session");
+                                            log.trace("Display price for product " + sodainfo.name + " due to soda button push.");
+                                            server.clientchannels[sessionid].displayerror("fa-barcode", "Price Check", sodainfo.name + " costs " + sodainfo.price);
+                                            cb(null, false);
+                                        }
+                                        else
+                                        {
+                                            log.info("Vend request for " + requested_soda + " AUTHORIZED for user " + session.username);
+                                            server.clientchannels[sessionid].displaysoda(requested_soda, sodainfo.name);
+                                            redisclient.hsetAsync("sodads:" + sessionid, "activevend", true).then(function ()
                                             {
-                                                server.clientchannels[sessionid].displaysoda(requested_soda, sodainfo.name);
-                                                redisclient.hsetAsync("sodads:" + sessionid, "activevend", true).then(function ()
-                                                {
-                                                    cb(null, true);
-                                                });
+                                                cb(null, true);
                                             });
-                                }
+                                        }
+                                    });
                             }).catch(function (e)
                                 {
                                     log.error("Vend request for " + requested_soda + " DENIED due to lookup error " + e);
@@ -1365,7 +1438,7 @@ class sodad_server {
                                                     {
                                                         if (success)
                                                         {
-                                                        models.Products.find({where : {barcode : server.initdata.sodamap[requested_soda] }})
+                                                        models.DynamicProducts.find({where : {barcode : server.initdata.sodamap[requested_soda], userid: session.uid }})
                                                             .then(function (sodainfo)
                                                             {
                                                                 log.info("Purchase " + sodainfo.name + " due to soda vend");
@@ -1436,22 +1509,46 @@ class sodad_server {
                                 server.handleCoinDeposit(server, sessionid, "1.00", "03", user);
                                 break;
                             case "Q1 00":
-                                server.handleBillDeposit(server, sessionid, "1.00", user);
+                                server.handleBillEscrow(server, sessionid, "1.00", user);
                                 break;
                             case "Q1 01":
-                                server.handleBillDeposit(server, sessionid, "5.00", user);
+                                server.handleBillEscrow(server, sessionid, "5.00", user);
                                 break;
                             case "Q1 02":
-                                server.handleBillDeposit(server, sessionid, "10.00", user);
+                                server.handleBillEscrow(server, sessionid, "10.00", user);
                                 break;
                             case "Q1 03":
-                                server.handleBillDeposit(server, sessionid, "20.00", user);
+                                server.handleBillEscrow(server, sessionid, "20.00", user);
                                 break;
                             case "Q1 04":
-                                server.handleBillDeposit(server, sessionid, "50.00", user);
+                                server.handleBillEscrow(server, sessionid, "50.00", user);
                                 break;
                             case "Q1 05":
-                                server.handleBillDeposit(server, sessionid, "100.00", user);
+                                server.handleBillEscrow(server, sessionid, "100.00", user);
+                                break;
+                            case "Q2 00":
+                                server.handleBillStack(
+                                    server, sessionid, "1.00", user);
+                                break;
+                            case "Q2 01":
+                                server.handleBillStack(
+                                    server, sessionid, "5.00", user);
+                                break;
+                            case "Q2 02":
+                                server.handleBillStack(
+                                    server, sessionid, "10.00", user);
+                                break;
+                            case "Q2 03":
+                                server.handleBillStack(
+                                    server, sessionid, "20.00", user);
+                                break;
+                            case "Q2 04":
+                                server.handleBillStack(
+                                    server, sessionid, "50.00", user);
+                                break;
+                            case "Q2 05":
+                                server.handleBillStack(
+                                    server, sessionid, "100.00", user);
                                 break;
                             default:
                                 log.error("Unknown MDB command: " + command);
@@ -1542,6 +1639,11 @@ class sodad_server {
                 log.info("Manual deposit of " + amt + " for client " + client);
                 server.balance_transaction(server, client, "ADD MANUAL",
                         "Manual Deposit", null,  amt);
+            },
+            rain: function()
+            {
+                var client = this.id;
+                server.handleRainRequest(server, client);
             },
             transfer: function(amt, user)
             {
@@ -1652,7 +1754,7 @@ class sodad_server {
                 models.Users.find(
                         {
                             where: {
-                                username: user
+                                username: user.toLowerCase()
                             }
                         })
                             .then(function (entry)
@@ -1709,7 +1811,9 @@ class sodad_server {
 
                         // fprint
                         // Put the fp_server in id mode off the bat
-                        server.identifymode_fingerprint(server, server.clientidmap[ClientType.Soda][0], true);
+                        if (typedata.type == ClientType.Soda) {
+                            server.identifymode_fingerprint(server, server.clientidmap[ClientType.Soda][0], true);
+                        }
 
                         log.info("Registered client channel type (" + ClientType[typedata.type] + "/"
                             + typedata.id + ") for client " + socket.id);

@@ -28,6 +28,7 @@ export class Models {
     Orders: SequelizeModel;
     ProductSoure: SequelizeModel;
     Products: SequelizeModel;
+    DynamicProducts: SequelizeModel;
     //Profiles: SequelizeModel;
     Roles: SequelizeModel;
     SodaInventory: SequelizeModel;
@@ -45,18 +46,6 @@ export class Models {
           dateFn = "date";
 
         this.sql = sql;
-
-/* TODO(dbounov): For know can't add AggregatePurchases since it doesn't have a
- primary key.
-
-	this.AggregatePurchases = sql.define('aggregate_purchases', {
-	   date: sequelize.DATE,
-           barcode: sequelize.STRING,
-           quantity: sequelize.INTEGER,
-           price: sequelize.DECIMAL,
-           builkid: sequelize.INTEGER,
-	}, {timestamps : false})
-*/
 
         this.BulkItems = sql.define('bulk_items', {
             bulkid: { type: sequelize.INTEGER, primaryKey: true },
@@ -172,6 +161,16 @@ single column primary key
             bulkid: sequelize.INTEGER,
             coffee: sequelize.BOOLEAN
         }, {timestamps : false});
+
+        this.DynamicProducts = sql.define('dynamic_barcode_lookup', {
+            barcode: { type: sequelize.STRING, primaryKey: true },
+            name: sequelize.STRING,
+            phonetic_name: sequelize.STRING,
+            price: sequelize.DECIMAL,
+            bulkid: sequelize.INTEGER,
+            coffee: sequelize.BOOLEAN,
+            userid: sequelize.INTEGER
+        }, {timestamps : false, freezeTableName : true});
 
 	//(dbounov): Not including profiles since its likely to be deleted.
 	//TODO: Delete it.

@@ -5,7 +5,23 @@ from django.db import models, connection, transaction
 # Current tax rate.  This is only used to compute current item prices.  For any
 # historical analysis, the per-order tax rate stored with each order is used
 # instead.
-TAX_RATE = Decimal("0.0875")
+TAX_RATE = Decimal("0.0775")
+
+class CharNullField(models.CharField):
+    """Courtesy of https://code.djangoproject.com/ticket/9590."""
+    description = "CharField that stores NULL but returns ''"
+    def to_python(self, value):
+        if isinstance(value, models.CharField):
+            return value 
+        if value==None:
+            return ""
+        else:
+            return value
+    def get_db_prep_value(self, value):
+        if value=="":
+            return None
+        else:
+            return value
 
 class ProductSource(models.Model):
     class Meta:
@@ -29,6 +45,23 @@ class FloorLocations(models.Model):
     def __unicode__(self):
         return self.name
 
+    @classmethod
+    def get_all_locations(cls):
+        """Return basic information about all floor locations.
+
+        The returned value is a list of dictionaries. Each dictionary has keys
+        for id, name and markup. id is also its index in the list.
+        """
+        cursor = connection.cursor()
+        cursor.execute("""SELECT id, name, markup
+                          FROM floor_locations ORDER BY id ASC""")
+
+        locations = []
+        for (fid, name, markup) in cursor.fetchall():
+            locations.append({'id': fid, 'name': name, 'markup': markup})
+        return locations
+
+
 class BulkItem(models.Model):
     class Meta:
         db_table = 'bulk_items'
@@ -49,6 +82,10 @@ class BulkItem(models.Model):
     floor_location = models.ForeignKey(FloorLocations,
                                        db_column='floor_location')
     product_id = models.CharField(max_length=255, blank=True)
+
+    bulkbarcode = CharNullField(max_length=32,
+                                verbose_name="Bulk item barcode",
+                                null=True, blank=True)
 
     def __unicode__(self):
         return self.description
@@ -100,6 +137,21 @@ class Product(models.Model):
                           WHERE barcode = %s GROUP BY date ORDER BY date""",
                        [self.barcode])
         return cursor.fetchall()
+
+class DynamicProduct(models.Model):
+    """This is a view, and needs a userid specified to be tractable."""
+    class Meta:
+        db_table = 'dynamic_barcode_lookup'
+
+    barcode = models.CharField(max_length=32, primary_key=True)
+    name = models.CharField(max_length=256)
+    phonetic_name = models.CharField(max_length=256)
+    price = models.DecimalField(max_digits=12, decimal_places=2)
+    bulk = models.ForeignKey(BulkItem, db_column='bulkid', null=True, blank=True)
+    userid = models.IntegerField(null=False, blank=False)
+
+    def __unicode__(self):
+        return "%s [%s]" % (self.name, self.barcode)
 
 class HistoricalPrice(models.Model):
     class Meta:
@@ -161,7 +213,7 @@ class Inventory(models.Model):
         db_table = 'inventory'
 
     inventoryid = models.AutoField(primary_key=True)
-    inventory_time = models.DateField()
+    inventory_time = models.DateTimeField()
 
     def __unicode__(self):
         return "#%d %s" % (self.inventoryid, self.inventory_time)
@@ -169,7 +221,8 @@ class Inventory(models.Model):
     @classmethod
     def all_inventories(cls):
         cursor = connection.cursor()
-        cursor.execute("SELECT DISTINCT date FROM inventory ORDER BY date")
+        cursor.execute(
+            "SELECT DISTINCT date::date AS date FROM inventory ORDER BY date")
         return [r[0] for r in cursor.fetchall()]
 
     @classmethod
@@ -186,7 +239,7 @@ class Inventory(models.Model):
         cursor = connection.cursor()
         cursor.execute("""SELECT bulkid, units, cases, loose_units, case_size
                           FROM inventory
-                          WHERE date = %s""", [date])
+                          WHERE date::date = %s""", [date])
 
         inventory = {}
         for (bulkid, units, cases, loose, case_size) in cursor.fetchall():
@@ -205,7 +258,7 @@ class Inventory(models.Model):
         cursor = connection.cursor()
 
         cursor.execute("""DELETE FROM inventory
-                          WHERE date = %s AND bulkid = %s""",
+                          WHERE date::date = %s AND bulkid = %s""",
                        (date, bulkid))
 
         if count is not None:
@@ -247,16 +300,16 @@ class Inventory(models.Model):
 
 #        sql = """
 #with start_dates as
-#   (select bulkid, max(date) as date from inventory
-#       where date <= %s group by bulkid)
+#   (select bulkid, max(date::date) as date from inventory
+#       where date::date <= %s group by bulkid)
 #select * from
-#   (select bulkid, date, units
+#   (select bulkid, date::date, units
 #       from start_dates natural join inventory) s1
 #natural full outer join
 #   (select a.bulkid, sum(quantity) as sales
 #       from aggregate_purchases a left join start_dates using (bulkid)
-#       where coalesce(a.date > start_dates.date, true)
-#         and a.date <= %s
+#       where coalesce(a.date::date > start_dates.date, true)
+#         and a.date::date <= %s
 #       group by bulkid) s2
 #natural full outer join
 #   (select oi.bulk_type_id as bulkid,
@@ -264,8 +317,8 @@ class Inventory(models.Model):
 #       from orders o
 #           join order_items oi on o.id = oi.order_id
 #           left join start_dates on start_dates.bulkid = oi.bulk_type_id
-#       where coalesce(o.date > start_dates.date, true)
-#         and o.date <= %s
+#       where coalesce(o.date::date > start_dates.date, true)
+#         and o.date::date <= %s
 #       group by oi.bulk_type_id) s3
 #where bulkid is not null
 #order by bulkid;"""
@@ -278,31 +331,31 @@ class Inventory(models.Model):
         sql = """
 select * 
 from (select bulkid, date, units
-      from (select bulkid, max(date) as date 
+      from (select bulkid, max(date::date) as date 
             from inventory
-            where date <= %s 
+            where date::date <= %s 
             group by bulkid) s1a 
       natural join inventory) s1
 natural full outer join 
     (select a.bulkid, sum(quantity) as sales
      from aggregate_purchases a 
      left join 
-         (select bulkid, max(date) as date 
+         (select bulkid, max(date::date) as date 
           from inventory
-          where date <= %s 
+          where date::date <= %s 
           group by bulkid) s2a using (bulkid)
-     where coalesce(a.date > s2a.date, true) and a.date <= %s
+     where coalesce(a.date::date > s2a.date, true) and a.date::date <= %s
      group by bulkid) s2
 natural full outer join
     (select oi.bulk_type_id as bulkid, sum(oi.quantity * oi.number) as purchases
      from orders o
      join order_items oi on o.id = oi.order_id
      left join 
-         (select bulkid, max(date) as date 
+         (select bulkid, max(date::date) as date 
           from inventory
-          where date <= %s 
+          where date::date <= %s 
           group by bulkid) s3a on s3a.bulkid = oi.bulk_type_id
-     where coalesce(o.date > s3a.date, true) and o.date <= %s
+     where coalesce(o.date::date > s3a.date, true) and o.date::date <= %s
      group by oi.bulk_type_id) s3
 where bulkid is not null
 """
@@ -340,7 +393,7 @@ where bulkid is not null
 
         cursor.execute("""SELECT bulkid, sum(aggregate_purchases.quantity)
                           FROM aggregate_purchases
-                          WHERE date >= %s AND date <= %s
+                          WHERE date::date >= %s AND date::date <= %s
                                 AND bulkid is not NULL
                           GROUP BY bulkid""", [date_from, date_to])
         return dict(cursor.fetchall())

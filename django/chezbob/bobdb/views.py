@@ -6,7 +6,8 @@ from django.shortcuts import render_to_response, get_object_or_404
 from django.core.exceptions import ObjectDoesNotExist, PermissionDenied
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.http import HttpResponse, HttpResponseRedirect
-from chezbob.bobdb.models import BulkItem, Inventory, Product, ProductSource 
+from chezbob.bobdb.models import BulkItem, Inventory, Product, ProductSource
+from chezbob.bobdb.models import FloorLocations
 from chezbob.orders.models import Order, OrderItem
 
 def parse_date(datestr):
@@ -17,7 +18,12 @@ def parse_date(datestr):
     """
 
     if isinstance(datestr, datetime.date): return datestr
-    return datetime.date(*strptime(datestr, "%Y-%m-%d")[0:3])
+
+    try:
+        return datetime.date(*strptime(datestr, "%Y-%m-%d")[0:3])
+    except ValueError:
+        pass
+    return datetime.date(*strptime(datestr, "%Y-%m-%d %H:%M:%S")[0:3])
 
 # It may be better to switch to a per-form key rather than a per-session key,
 # but this should provide some protection for now.
@@ -398,31 +404,9 @@ def take_inventory(request, date):
     counts = Inventory.get_inventory(date)
     inventory_summary = Inventory.get_inventory_summary(date-datetime.timedelta(days=1), include_latest=False)
 
-    locations = []
-    location = { 'name': 'Unknown',
-                 'items': []
-               }
-    locations.append(location);
-    location = { 'name': 'Shelves',
-                 'items': []
-               }
-    locations.append(location);
-    location = { 'name': 'Refrigerator',
-                 'items': []
-               }
-    locations.append(location);
-    location = { 'name': 'Freezer',
-                 'items': []
-               }
-    locations.append(location);
-    location = { 'name': 'Soda Machine',
-                 'items': []
-               }
-    locations.append(location);
-    location = { 'name': 'Terminal',
-                 'items': []
-               }
-    locations.append(location);
+    locations = FloorLocations.get_all_locations()
+    for location in locations:
+        location['items'] = []
 
     counter = 1
 
@@ -508,6 +492,11 @@ def estimate_order(request):
 
         if not p.active and not show_all: continue
 
+        # TODO: This is a hack, but without it, the system crashes when a
+        # bulkitem has never been inventoried before.
+        if p.bulkid not in inventory:
+            inventory[p.bulkid] = {"estimate": 0}
+
         info = {'type': p,
                 'inventory': inventory[p.bulkid],
                 'sales': sales.get(p.bulkid, 0),
@@ -518,7 +507,7 @@ def estimate_order(request):
 
         # Calculate how many units of new product are needed
         needed = info['sales'] - max(info['inventory']['estimate'], 0)
-        needed += max(p.reserve, p.quantity / 5.0)
+        needed += Decimal(max(p.reserve, p.quantity / 5.0))
         needed = float(needed) / p.quantity
         # This product went out of stock, tweak in case we didn't order enough
         #if info['inventory']['estimate'] <= 0 and info['sales'] > 0:
@@ -532,7 +521,8 @@ def estimate_order(request):
         # Estimate how many days of product remain in inventory 
         # TODO: [nbales] This should really be in another view
         if info['inventory']['estimate'] > 0 and info['sales'] > 0:
-            sales_rate = float(info['sales']) / (date_to - date_from).days
+            sales_rate = Decimal(
+                float(info['sales']) / (date_to - date_from).days)
             days_remain = int(info['inventory']['estimate'] / sales_rate)
             info['exhausted_date'] = datetime.date.today() + datetime.timedelta(days=days_remain)
             if out_of_stock is None or info['exhausted_date'] < out_of_stock:

@@ -1,0 +1,295 @@
+<html>
+    <head>
+        <title>For shame...</title>
+        <meta http-equiv="refresh" content="3600">
+        <link href='https://fonts.googleapis.com/css?family=Open+Sans:400,700|Dancing+Script' rel='stylesheet' type='text/css'>
+        <link rel="stylesheet" href="css/common.css">
+        <script src="/js/jquery-2.2.3.min.js"></script>
+        <script src="/js/jquery.fittext.js"></script>
+        <script>
+            JSON_SOURCE = "json/shame.json";
+            JSON_UPDATE_INTERVAL = 10000;
+            MAXIMUM_DELAY_ADD = 5000;
+            BASE_DELAY = 3000;
+
+            var details = null;
+            var current_user = 0;
+            var max_weight;
+
+            var debt_user;
+            var debt_amount;
+            var delinquent_user;
+            var delinquent_time;
+
+            var debtbox;
+            var timebox;
+            var loadbox;
+
+            function get_weight(x) {
+                return -1 * x.balance * (x.days_on_wall + 1);
+            }
+
+            function get_factor(x) {
+                return get_weight(x) / max_weight;
+            }
+
+
+            function show_only(box) {
+                debtbox.css("display", "none");
+                timebox.css("display", "none");
+                loadbox.css("display", "none");
+                box.css("display", "block");
+            }
+
+            function update_page(debtor) {
+                switch(debtor.type) {
+                    case "high_value":
+                        debt_user.text(debtor.nickname);
+                        debt_amount.text("$" + debtor.debt);
+
+                        show_only(debtbox);
+                        debt_user.fitText(1.5);
+                        $("#debtbox .answer").fitText(2.0);
+                        break;
+                    case "delinquent":
+                        delinquent_user.text(debtor.nickname);
+                        delinquent_time.text(debtor.days_on_wall);
+
+                        show_only(timebox);
+                        delinquent_user.fitText(1.5);
+                        $("#timebox .answer").fitText(2.0);
+                        break;
+                    default:
+                        console.log("Unknown type of debtor:");
+                        console.log(JSON.stringify(debtor));
+                }
+            }
+
+            function display_thanks_message() {
+                $("#loading").html(
+                    "<h2>Thanks for paying your Chez Bob balance!</h2>" +
+                    "<p>Please avoid owing Chez Bob more than $5</p>")
+                    //"<p>Thanks for keeping your balance below $" +
+                    //details.threshold + "!</p>")
+                show_only(loadbox);
+            }
+
+            function update_data(on_complete) {
+
+                function on_update_received(data, textStatus, jqXHR) {
+                    console.log(
+                        "Received updated data with " +
+                        data.debtors.length + " debtors");
+
+                    if (details != null)
+                        old_debtors_length = details.debtors.length;
+                    else
+                        old_debtors_length = 0;
+
+                    details = data;
+
+                    if (details.debtors.length == 0) {
+                        display_thanks_message();
+                    }
+                    else {
+                        // Fun fact: the ancient version of chromium in 12.04's
+                        // repos (... we should really upgrade) doesn't support
+                        // the => syntax sugar.
+                        function max(a, b) { return Math.max(a, b); }
+                        max_weight = (details.debtors.map(get_weight).reduce(max));
+                        console.log("New max_weight: " + max_weight);
+
+                        if (old_debtors_length == 0) {
+                            console.log("Forcing update since no old data");
+                            choose_someone();
+                        }
+                    }
+
+                    if (on_complete != null) {
+                        on_complete();
+                    }
+                }
+
+                $.ajax({
+                    dataType: "json",
+                    url: JSON_SOURCE,
+                    data: "",
+                    //crossDomain: false,
+                    headers: {'X-Requested-With': 'XMLHttpRequest'},
+                    success: on_update_received
+                });
+                //$.getJSON(JSON_SOURCE, "").done(on_update_received);
+            }
+
+            function choose_someone() {
+                if (details.debtors == null || details.debtors.length == 0) {
+                    console.log("Rescheduling update since null choice");
+                    setTimeout(choose_someone, 1000);
+                    return;
+                }
+
+                var choice = details.debtors[current_user];
+                var factor;
+                current_user = (current_user + 1) % details.debtors.length;
+
+                if (choice != null) {
+                    update_page(choice);
+                    factor = get_factor(choice);
+                    delay = (BASE_DELAY +
+                             Math.floor(factor * MAXIMUM_DELAY_ADD));
+                    console.log(
+                        "Switching from " + choice.username + " in " +
+                        delay + " ms (factor: " + factor + ")");
+                    setTimeout(choose_someone, delay);
+                }
+            }
+
+            function start() {
+                debt_user = $("#debt-users-name");
+                debt_amount = $("#debt-amount");
+
+                delinquent_user = $("#delinquent-users-name");
+                delinquent_time = $("#wall-time");
+
+                debtbox = $("#debtbox");
+                timebox = $("#timebox");
+                loadbox = $("#loading");
+
+                console.log("Starting...");
+                update_data();
+                setInterval(update_data, JSON_UPDATE_INTERVAL);
+            }
+        </script>
+        <style>
+            body {
+                height: 100%;
+            }
+            div#debtbox, div#timebox {
+                vertical-align: middle;
+                text-align: center;
+                margin-left: auto;
+                margin-right: auto;
+                width: 100%;
+                margin-top: auto;
+                margin-bottom: auto;
+
+                font-family: Helvetica, sans-serif;
+                font-size: 6vw;
+                /*font-size: 5.2em;*/
+
+                position: relative;
+                top: 40%;
+                transform: translateY(-50%);
+                display: none;
+            }
+            #loading {
+                vertical-align: middle;
+                text-align: center;
+                margin-left: auto;
+                margin-right: auto;
+                width: 100%;
+                margin-top: auto;
+                margin-bottom: auto;
+
+                font-family: Helvetica, sans-serif;
+                position: relative;
+                top: 40%;
+                transform: translateY(-50%);
+            }
+            #loading h2 {
+                font-size: 5.2em;
+                border-bottom: none;
+            }
+            #loading p {
+                font-size: 4em;
+            }
+
+            div.users-name {
+                color: #bb0000;
+                font-weight: bold;
+                width: 100%;
+            }
+
+            span.amount {
+                color: #bb0000;
+                font-weight: bold;
+                font-size: 1.4em;
+            }
+
+            div.question {
+                display: block;
+            }
+
+            div.answer {
+                display: block;
+                /*font-size: .7em;*/
+            }
+
+            span.shame {
+                font-weight: bold;
+                color: #FFAA00;
+                padding-top: 70px;
+                display: block;
+            }
+
+            span.plea {
+                font-size: .6em;
+                margin-bottom: 10px;
+                display: block;
+                padding-bottom: 70px;
+            }
+
+            span.username {
+                font-style: italic;
+                margin-bottom: 10px;
+                display: block;
+            }
+
+            div.followup {
+                font-weight: normal;
+                /*color: #FFAA00;*/
+                padding-top: 70px;
+                display: block;
+                font-size: .6em;
+            }
+        </style>
+    </head>
+    <body onload="start()">
+        <h1 id='banner'>Chez Bob</h1>
+        <div id="loading">
+            <p>
+                Loading...
+            </p>
+        </div>
+        <div id="debtbox">
+            <div class="question">
+                <div class="users-name" id="debt-users-name"></div>
+            </div>
+            <div class="answer">
+                owes Chez Bob
+                <span class="amount" id="debt-amount"></span>!
+            </div>
+            <div class="followup">
+                Encourage them to pay their debt today!
+            </div>
+            <!--<span class="shame">
+                For Shame!
+            </span>-->
+        </div>
+        <div id="timebox">
+            <div class="question">
+                <div class="users-name" id="delinquent-users-name"></div>
+            </div>
+            <div class="answer">
+                has been in debt for
+                <span class="amount" id="wall-time"></span> days!
+            </div>
+            <div class="followup">
+                Encourage them to pay their debt today!
+            </div>
+            <!--<span class="shame">
+                For Shame!
+            </span>-->
+        </div>
+    </body>
+</html>
